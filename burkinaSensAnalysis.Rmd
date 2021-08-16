@@ -1,0 +1,433 @@
+---
+title: "Burkina Faso data using EpiCyst Model"
+date: "27.04.2021"
+---
+```{r, include=FALSE}
+rm(list = ls())
+Sys.setenv(LANG = "en")
+setwd("C:/Users/morika/Desktop/AdvOneHealth/")
+
+library(epicyst)
+library(ggplot2)
+library(dampack)
+library(kableExtra)
+library(dplyr)
+library(googlesheets4)
+```
+
+```{r eval=FALSE, include=FALSE}
+url <- "https://docs.google.com/spreadsheets/d/1wovS9EKz_yV6kTNZ6td8rUvGUHTQjDkJNlrHrKVJtOE/edit#gid=1862836567"
+urlh <- "https://docs.google.com/spreadsheets/d/1fFyn-5kfc4PD9oVc_E6zCod7GwJVF-POYLJXygIt1UU/edit#gid=1862836567"
+
+read_sheet(url)
+ssid <- as_sheets_id(url)
+unclass(ssid)
+
+read_sheet(urlh)
+ssid <- as_sheets_id(urlh)
+unclass(ssid)
+
+gs4_auth(
+email = "kathleenbmoriarty@gmail.com",
+path = NULL,
+scopes = "https://www.googleapis.com/auth/drive",
+cache = "path_to_cache",
+use_oob = FALSE,
+token = NULL)
+
+#gs_auth(new_user = TRUE)
+```
+## Import Data from Google Sheets
+
+```{r, message=FALSE, warning=FALSE}
+
+
+ssid <- "1wovS9EKz_yV6kTNZ6td8rUvGUHTQjDkJNlrHrKVJtOE"
+ssidh <-"1fFyn-5kfc4PD9oVc_E6zCod7GwJVF-POYLJXygIt1UU"
+costs <- read_sheet(ssid, sheet = "SSA_Costs_V2")
+costsh <- read_sheet(ssidh, sheet = "SSA_Costs_V2")
+
+#dalys <- read_sheet(ssid, sheet = "SSA_DALYs", range = "A2:B7")
+cparams <- read_sheet(ssid, sheet = "BF_Params")
+
+```
+
+## Initial setup
+
+```{r}
+
+#Create Burkina Faso subset
+aparams <- set_up(PPS=cparams[which(cparams$Param=="PPS"),]$Val, 
+                   HPS = cparams[which(cparams$Param=="HPS"),]$Val,
+                   TPrev = cparams[which(cparams$Param=="TPrev"),]$Val, 
+                   CPrev = cparams[which(cparams$Param=="CPrev"),]$Val, 
+                   LEH=cparams[which(cparams$Param=="LEH"),]$Val, 
+                   LEP=cparams[which(cparams$Param=="LEP"),]$Val)
+
+#Parameters
+#aparams[[1]]$HPS
+
+#State variables
+#aparams[[2]]
+
+```
+
+## Run model with Baseline and Interventions
+* time: months
+* steps: per unit of time
+
+
+```{r}
+
+dfSQ <- run_model(params=aparams[[1]], initial_states =aparams[[2]], time = 50, step = 1)
+
+g1 <- ggplot(data=dfSQ, aes(x=t/12, y=Humans_Cysticercosis/1000, color="Baseline"))+
+  geom_line()+
+  ylim(0,1000)+ 
+  xlim(0,30)+
+  labs(title="T. Solium Interventions in Burkina Faso",x="Time (years)", y = "Human Cysticercosis Cases (x 10^3)") +
+  theme_light() +
+  theme(legend.title = element_blank()) 
+
+#Model with Sanitation intervention
+dfSAN <- run_model(params=aparams[[1]], initial_states=aparams[[2]], time = 50, step = 1, intervention="Sanitation", intervention_time = 3)
+
+#Model with Pig MDA intervention
+dfPMDA <- run_model(params=aparams[[1]], initial_states=aparams[[2]], time = 50, step = 1, intervention="Pig_MDA", intervention_time = 3)
+
+#Model with Pig Vaccination intervention
+dfPVAC <- run_model(params=aparams[[1]], initial_states =aparams[[2]], time = 50, step = 1, intervention="Pig_vaccine", intervention_time = 3)
+
+#Model with HT&T intervention
+#Updated effect_size of HT&T to assume coverage of 80% instead of 90%
+#assumed therapeutic coverage (80%) × sensitivity of test to T. solium (0.97) × specificity of the test to cysticercosis infection (0.98) × assumed drug efficacy (99%) = 0.75
+eff <- intervention_effect_size()
+eff$Human_test_and_treat <- 0.75
+dfHTT <- run_model(params=aparams[[1]], initial_states =aparams[[2]], time = 50, step = 1, intervention="Human_test_and_treat", intervention_time = 3, intervention_effect = eff)
+
+#Model with Pig MDA + Pig Vaccination intervention
+dfPCOMBO <- run_model(params=aparams[[1]], initial_states =aparams[[2]], time = 50, step = 1, intervention=c("Pig_MDA","Pig_vaccine"), intervention_time = 3)
+
+#Model with Pig MDA + Pig Vaccination + HT&T intervention
+dfACOMBO <- run_model(params=aparams[[1]], initial_states =aparams[[2]], time = 50, step = 1, intervention=c("Pig_MDA","Pig_vaccine", "Human_test_and_treat"), intervention_time = 3, intervention_effect = eff)
+
+#Model with Pig MDA + Sanitation
+dfPSCOMBO <- run_model(params=aparams[[1]], initial_states =aparams[[2]], time = 50, step = 1, intervention=c("Pig_MDA","Sanitation"), intervention_time = 3)
+
+#Add to graph
+g2<- g1 + 
+  geom_line(data=dfSAN, aes(x=t/12,y=Humans_Cysticercosis/1000, color="Sanitation")) +
+  geom_line(data=dfPMDA, aes(x=t/12,y=Humans_Cysticercosis/1000, color="Pig MDA")) +
+  geom_line(data=dfPVAC, aes(x=t/12,y=Humans_Cysticercosis/1000, color="Pig Vaccination")) +
+  geom_line(data=dfHTT, aes(x=t/12,y=Humans_Cysticercosis/1000, color="HT&T")) +
+  geom_line(data=dfPCOMBO, aes(x=t/12,y=Humans_Cysticercosis/1000, color="Pig MDA + Pig Vaccination"))+
+  geom_line(data=dfACOMBO, aes(x=t/12,y=Humans_Cysticercosis/1000, color="Pig MDA + Pig Vacc + HT&T")) +
+  geom_line(data=dfPSCOMBO, aes(x=t/12,y=Humans_Cysticercosis/1000, color="Pig MDA + Sanitation"))
+  
+
+#Changing graph features 
+g2 <- g2 + scale_colour_manual("", 
+                      breaks = c("Baseline","Sanitation","Pig MDA", "Pig Vaccination", "HT&T", "Pig MDA + Pig Vaccination", "Pig MDA + Pig Vacc + HT&T", "Pig MDA + Sanitation"),
+                      values = c("black", "purple", "blue","green","darkorange2","deeppink1","turquoise3", "slategrey")) +
+  theme_light() +
+  theme(legend.title = element_blank()) 
+
+plot(g2)
+
+
+```
+
+
+## Calculate R0
+
+```{r}
+r0(params= aparams[[1]])
+
+```
+
+## BCR: Benefit Cost Ratio
+
+### Assumptions:
+
+* Cost per pig case of cysti: 14 USD
+* Cost per human case of cysti: 230 USD
+* Other costs explained in spreadsheets
+
+```{r}
+#Functions
+prepCompare = function(df, strAcronym) {
+
+df_short <- df[which(df$t %% 12==1 & df$t < 362),]
+df_short <- df_short %>%
+  mutate(t = (t-1)/12) %>% 
+  select(t, Humans_Cysticercosis, Pigs_Cysticercosis, Humans_Taeniasis)
+
+#df_short <- df_short %>% select(t, Humans_Cysticercosis, Pigs_Cysticercosis, Humans_Taeniasis)
+colnames(df_short) <- c("t", paste(strAcronym,"_H_Cysti", sep=""), paste(strAcronym,"_P_Cysti", sep=""), paste(strAcronym,"_H_Tae", sep=""))
+
+#if dfCompare is empty, then set first intervention to equal dfCompare
+if (dim(dfCompare)[1] == 0) {
+  print("DFCOMPARE is empty")
+  dfCompare <- df_short
+} else {
+  print("DFCOMPARE is nOT empty")
+  
+   dfCompare <- merge(dfCompare, df_short, by=c("t"))
+}
+
+  return(dfCompare)
+}
+
+#calcBCR = function(dfCompare, strAcronym){
+#  bcr_tmp = paste("bcr_", strAcronym, sep="")
+#  p_cysti_tmp = paste(strAcronym, "_P_Cysti", sep="")
+#  h_cysti_tmp = paste(strAcronym, "_H_Cysti", sep="")
+#  cost_tmp = paste(strAcronym, "_Cost", sep="")
+#  
+#  dfCompare <- dfCompare %>% mutate(bcr_tmp = ((SQ_P_Cysti-p_cysti_tmp)*costPig + #(SQ_H_Cysti-h_cysti_tmp)*costHuman) / cost_tmp)
+#  
+#  return(dfCompare)
+#}
+
+#Intial values
+costPig <- as.double(costs[1,"Cost_Per_Pig_Case"])
+costHuman <- as.double(costs[1,"Cost_Per_Human_Case"])
+
+tot_pop = aparams[[1]]$HPS
+cost_tae = as.double(costs[1,"Costs_HTT_Taeniasis"])
+cost_cysti = as.double(costs[1,"Costs_HTT_Cysti"])
+costs_test = as.double(costs[1,"Costs_HTT_Test"])
+
+dfCompare <- data.frame(t=integer())
+dfCompareh <- data.frame(t=integer())
+
+#Gather all data from the various model runs
+dfCompare <- prepCompare(dfSQ, "SQ")
+dfCompare <- prepCompare(dfSAN, "SAN")
+dfCompare <- prepCompare(dfHTT, "HTT")
+dfCompare <- prepCompare(dfPMDA, "PMDA")
+dfCompare <- prepCompare(dfPVAC, "PVAC")
+
+dfCompareh <- prepCompare(dfSQ, "SQ")
+dfCompareh <- prepCompare(dfSAN, "SAN")
+dfCompareh <- prepCompare(dfHTT, "HTT")
+dfCompareh <- prepCompare(dfPMDA, "PMDA")
+dfCompareh <- prepCompare(dfPVAC, "PVAC")
+
+#Add Cost data 
+dfCompare <- merge(dfCompare, costs[1:6], by.x="t", by.y = "Year")
+dfCompareh <- merge(dfCompareh, costsh[1:6], by.x="t", by.y = "Year")
+
+#Add Cost Data for HT&T and Combos w/ HT&T
+#costs_test * tot_pop + costs_Tae*tae_cases+ costs_Cyst*cysti_cases)
+dfCompare <- dfCompare %>% mutate(HTT_Cost = costs_test*tot_pop*.8 + 
+                         cost_tae*dfCompare$HTT_H_Tae +
+                         cost_cysti*dfCompare$HTT_H_Cysti)
+dfCompareh <- dfCompareh %>% mutate(HTT_Cost = costs_test*tot_pop + 
+                         cost_tae*dfCompareh$HTT_H_Tae +
+                         cost_cysti*dfCompareh$HTT_H_Cysti)
+
+#Export Cost info in nice graphic
+dfCostDisplay <- dfCompare[, endsWith(colnames(dfCompare), "_Cost")]
+dfCostDisplay <- select(dfCostDisplay,1:5)
+dfCostDisplay$t <- 1:30
+dfCostDisplay <- dfCostDisplay[, c(6,1,2,3, 4, 5)]
+dfCostDisplay[,1] <-formatC(dfCostDisplay[,1], format="d", big.mark = ",")
+#for(i in 1:nrow(dfCostDisplay)){
+#  dfCostDisplay[,i] <-formatC(dfCostDisplay[,i], format="d", big.mark = ",")
+#}
+colnames(dfCostDisplay) = c("Years", "Status Quo", "Sanitation", "Pig MDA","Pig Vaccination", "Human T&T")
+
+cTbl <- dfCostDisplay[1:22,] %>%
+  kbl(caption = "Costs (USD) per Year by Intervention ", longtable = T, ) %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+
+dfCostDisplayh <- dfCompareh[, endsWith(colnames(dfCompareh), "_Cost")]
+dfCostDisplayh <- select(dfCostDisplayh,1:5)
+dfCostDisplayh$t <- 1:30
+dfCostDisplayh <- dfCostDisplayh[, c(6,1,2,3, 4, 5)]
+dfCostDisplayh[,1] <-formatC(dfCostDisplayh[,1], format="d", big.mark = ",")
+#for(i in 1:nrow(dfCostDisplayh)){
+#  dfCostDisplayh[,i] <-formatC(dfCostDisplayh[,i], format="d", big.mark = ",")
+#}
+colnames(dfCostDisplayh) = c("Years", "Status Quo", "Sanitation", "Pig MDA","Pig Vaccination", "Human T&T")
+
+cTblh <- dfCostDisplayh[1:22,] %>%
+  kbl(caption = "Costs (USD) per Year by Intervention ", longtable = T, ) %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+#Copy values to google drive
+#library("writexl")
+#xlsD <- select(dfCompare, HTT_Cost)
+#write_xlsx(xlsD,"xlsD.xlsx")
+
+#Run BCR Calculations
+#calcBCR(dfCompare, "SAN")
+
+```
+
+
+```{r}
+#Calculate # of human cases averted by the intervention
+dfCompare <- dfCompare %>% 
+  mutate(bcr_PMDA = ((SQ_P_Cysti-PMDA_P_Cysti)*costPig + (SQ_H_Cysti - PMDA_H_Cysti)*costHuman) / PMDA_Cost) %>% 
+  mutate(bcr_SAN = ((SQ_P_Cysti-SAN_P_Cysti)*costPig + (SQ_H_Cysti - SAN_H_Cysti)*costHuman) / SAN_Cost) %>% 
+  mutate(bcr_PVAC = ((SQ_P_Cysti-PVAC_P_Cysti)*costPig + (SQ_H_Cysti - PVAC_H_Cysti)*costHuman) / PVAC_Cost) %>%
+  mutate(bcr_HTT = ((SQ_P_Cysti-HTT_P_Cysti)*costPig + (SQ_H_Cysti - HTT_H_Cysti)*costHuman) / HTT_Cost)
+
+```
+
+## Cost Effectiveness Analysis How much does it cost to avert each DALY
+
+* The total number of DALYs in Burkina Faso in 2019 was 2064 (IHME).
+
+```{r}
+#Estimated DALYS per Human Cysticercosis case
+#20.3 million people in BF; 4.5% of population with active cases; 2,064 DALYS
+
+dalysPerCase <- 2064 / (0.045 * tot_pop)
+
+#Calculate how many DALYS were averted each year
+dfCompare <- dfCompare %>% 
+  mutate(SAN_DALYS_Avert = dalysPerCase*(SQ_H_Cysti - SAN_H_Cysti)) %>% 
+  mutate(PMDA_DALYS_Avert = dalysPerCase*(SQ_H_Cysti - PMDA_H_Cysti)) %>% 
+  mutate(PVAC_DALYS_Avert = dalysPerCase*(SQ_H_Cysti - PVAC_H_Cysti)) %>% 
+  mutate(HTT_DALYS_Avert = dalysPerCase*(SQ_H_Cysti - HTT_H_Cysti)) 
+
+#Cumulative DALYS averted
+dfCompare$SAN_CUM_DALYS_Avert <- dfCompare$SAN_DALYS_Avert
+dfCompare$PMDA_CUM_DALYS_Avert <- dfCompare$PMDA_DALYS_Avert
+dfCompare$PVAC_CUM_DALYS_Avert <- dfCompare$PVAC_DALYS_Avert
+dfCompare$HTT_CUM_DALYS_Avert <- dfCompare$HTT_DALYS_Avert
+
+for (row in 2:nrow(dfCompare)) {
+    dfCompare[row, "SAN_CUM_DALYS_Avert"] <- dfCompare[row, "SAN_DALYS_Avert"] + dfCompare[row-1, "SAN_CUM_DALYS_Avert"]
+    dfCompare[row, "PMDA_CUM_DALYS_Avert"] <- dfCompare[row, "PMDA_DALYS_Avert"] + dfCompare[row-1, "PMDA_CUM_DALYS_Avert"]
+    dfCompare[row, "PVAC_CUM_DALYS_Avert"] <- dfCompare[row, "PVAC_DALYS_Avert"] + dfCompare[row-1, "PVAC_CUM_DALYS_Avert"]
+    dfCompare[row, "HTT_CUM_DALYS_Avert"] <- dfCompare[row, "HTT_DALYS_Avert"] + dfCompare[row-1, "HTT_CUM_DALYS_Avert"]
+}
+
+#Calculate how much each DALY averted cost
+dfCompare <- dfCompare %>% 
+  mutate(SAN_Cost_DALY = SAN_Cost/SAN_DALYS_Avert) %>%
+  mutate(PMDA_Cost_DALY = PMDA_Cost/PMDA_DALYS_Avert) %>%
+  mutate(PVAC_Cost_DALY = PVAC_Cost/PVAC_DALYS_Avert) %>%
+  mutate(HTT_Cost_DALY = HTT_Cost/HTT_DALYS_Avert)
+
+##### Cumulative Costs per cumulative DALYs averted #####
+dfCompare$SQ_CUM_Cost <- dfCompare$SQ_Cost
+dfCompare$SAN_CUM_Cost <- dfCompare$SAN_Cost
+dfCompare$PMDA_CUM_Cost <- dfCompare$PMDA_Cost
+dfCompare$PVAC_CUM_Cost <- dfCompare$PVAC_Cost
+dfCompare$HTT_CUM_Cost <- dfCompare$HTT_Cost
+
+#higher parameters
+dfCompareh$SQ_CUM_Cost <- dfCompareh$SQ_Cost
+dfCompareh$SAN_CUM_Cost <- dfCompareh$SAN_Cost
+dfCompareh$PMDA_CUM_Cost <- dfCompareh$PMDA_Cost
+dfCompareh$PVAC_CUM_Cost <- dfCompareh$PVAC_Cost
+dfCompareh$HTT_CUM_Cost <- dfCompareh$HTT_Cost
+
+
+for (row in 2:nrow(dfCompare)) {
+    dfCompare[row, "SQ_CUM_Cost"] <- dfCompare[row, "SQ_Cost"] + dfCompare[row-1, "SQ_CUM_Cost"]
+    dfCompare[row, "SAN_CUM_Cost"] <- dfCompare[row, "SAN_Cost"] + dfCompare[row-1, "SAN_CUM_Cost"]
+    dfCompare[row, "PMDA_CUM_Cost"] <- dfCompare[row, "PMDA_Cost"] + dfCompare[row-1, "PMDA_CUM_Cost"]
+    dfCompare[row, "PVAC_CUM_Cost"] <- dfCompare[row, "PVAC_Cost"] + dfCompare[row-1, "PVAC_CUM_Cost"]
+    dfCompare[row, "HTT_CUM_Cost"] <- dfCompare[row, "HTT_Cost"] + dfCompare[row-1, "HTT_CUM_Cost"]
+}
+
+for (row in 2:nrow(dfCompareh)) {
+    dfCompareh[row, "SQ_CUM_Cost"] <- dfCompareh[row, "SQ_Cost"] + dfCompareh[row-1, "SQ_CUM_Cost"]
+    dfCompareh[row, "SAN_CUM_Cost"] <- dfCompareh[row, "SAN_Cost"] + dfCompareh[row-1, "SAN_CUM_Cost"]
+    dfCompareh[row, "PMDA_CUM_Cost"] <- dfCompareh[row, "PMDA_Cost"] + dfCompareh[row-1, "PMDA_CUM_Cost"]
+    dfCompareh[row, "PVAC_CUM_Cost"] <- dfCompareh[row, "PVAC_Cost"] + dfCompareh[row-1, "PVAC_CUM_Cost"]
+    dfCompareh[row, "HTT_CUM_Cost"] <- dfCompareh[row, "HTT_Cost"] + dfCompareh[row-1, "HTT_CUM_Cost"]
+}
+
+
+```
+
+## After 10 years, cumulative cost effectiveness analysis
+
+```{r, message=FALSE, warning=FALSE}
+library("data.table")
+library("hesim")
+library("magrittr") 
+
+n_samples = 1000
+set.seed(212)
+#cost
+cost <- vector(mode = "list", length = 5)
+names(cost) <- c("Status Quo", "Pig MDA", "Pig Vaccine", "HT&T", "Sanitation")
+cost[[1]] <- runif(n_samples, dfCompare[10, "SQ_CUM_Cost"],dfCompareh[10, "SQ_CUM_Cost"])
+cost[[2]] <- runif(n_samples, dfCompare[10, "PMDA_CUM_Cost"],dfCompareh[10, "PMDA_CUM_Cost"])
+cost[[3]] <- runif(n_samples, dfCompare[10, "PVAC_CUM_Cost"],dfCompareh[10, "PVAC_CUM_Cost"])
+cost[[4]] <- runif(n_samples, dfCompare[10, "HTT_CUM_Cost"],dfCompareh[10, "HTT_CUM_Cost"])
+cost[[5]] <- runif(n_samples, dfCompare[10, "SAN_CUM_Cost"],dfCompareh[10, "SAN_CUM_Cost"])
+
+# effectiveness
+daly <- cost
+#rnorm(n, mean = 0, sd = 1)
+daly[[1]] <- runif(n_samples, 1,1)
+daly[[2]] <- runif(n_samples, dfCompare[10, "PMDA_CUM_DALYS_Avert"],dfCompare[10, "PMDA_CUM_DALYS_Avert"])
+daly[[3]] <- runif(n_samples, dfCompare[10, "PVAC_CUM_DALYS_Avert"],dfCompare[10, "PVAC_CUM_DALYS_Avert"])
+daly[[4]] <- runif(n_samples, dfCompare[10, "HTT_CUM_DALYS_Avert"],dfCompare[10, "HTT_CUM_DALYS_Avert"])
+daly[[5]] <- runif(n_samples, dfCompare[10, "SAN_CUM_DALYS_Avert"],dfCompare[10, "SAN_CUM_DALYS_Avert"])
+
+ce <- data.table(sample = rep(seq(n_samples), length(daly)),
+                 strategy = rep(paste0("Strategy ", seq(1, 5)), 
+                                each = n_samples),
+                 cost = do.call("c", cost), qalys = do.call("c", daly))
+
+ce <- ce %>% mutate(strategy = 
+                      case_when(strategy == "Strategy 1" ~ "Status Quo",
+                              strategy == "Strategy 2" ~ "Pig MDA",
+                              strategy == "Strategy 3" ~ "Pig Vaccine",
+                              strategy == "Strategy 4" ~ "HT&T",
+                              strategy == "Strategy 5" ~ "Sanitation"))
+
+colnames(ce)[4]<-"dalys"
+ceTb <- ce[1995:2010,] %>%
+  kbl(caption = "Simulations with Range of Cost Parameters", longtable = T, ) %>%
+  kable_classic(full_width = F, html_font = "Cambria") 
+
+#tapply(ce$cost, ce$strategy, summary)
+
+ce_easy <- ce %>% mutate(cost = cost/1000000)
+colnames(ce_easy)[3]<- "cost_106"
+
+#plot to see data
+ggplot(data=ce_easy, aes(x=as.factor(strategy), y=cost_106)) +
+  geom_boxplot()
+
+#Willingness to pay
+ktop <- 1000000
+ktop2 <-100
+cea_out <-  cea(ce, k = seq(0, ktop, 10000), 
+                sample = "sample", strategy = "strategy", 
+                e = "dalys", c = "cost")
+
+#Graph of Willingness to Pay
+plot_ceac(cea_out) + geom_jitter()+theme_light()+xlab("Willingness to Pay Per DALY Averted")
+
+cea_out$summary
+cea_pw_out <-  cea_pw(ce_easy,  k = seq(0, ktop2, 1), 
+                      comparator = "Status Quo",
+                      sample = "sample", strategy = "strategy",
+                      e = "dalys", c = "cost_106")
+cea_pw_out$summary[,3:8] <- round(cea_pw_out$summary[,3:8],0)
+cea_pw_out$summary
+ceaTbl <- icer(cea_pw_out, k = 100) %>% format()
+ceaTbl[1,1] <- c("Incremental DALY Averted")
+
+View(ceaTbl[-c(3),])
+ceaTbl2 <- ceaTbl[-c(3),] %>%
+  kbl(caption = "Incremental Cost-effectiveness Ratio (ICER) Compared to Status Quo after 10 Years", longtable = T) %>%
+  kable_classic(full_width = F, html_font = "Cambria") %>%
+  footnote("Costs in Millions USD")
+print(ceaTbl2)
+
+```
+
